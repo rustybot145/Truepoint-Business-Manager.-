@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}Clients{% endblock %}
+{% block page_title %}Clients{% endblock %}
+{% block page_subtitle %}Manage your client relationships{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary" onclick="openClientModal()">
+  <i class="fa-solid fa-plus"></i> Add Client
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-toolbar-left">
+    <input type="text" id="client-search" class="form-control" placeholder="Search clients..."
+           style="width:240px" oninput="searchClients(this.value)">
+  </div>
+  <span class="badge badge-gray" id="client-count">{{ clients|length }} client{{ 's' if clients|length != 1 }}</span>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Client</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>Invoices</th>
+          <th>Total Paid</th>
+          <th>Meetings</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="clients-tbody">
+        {% if clients %}
+          {% for c in clients %}
+          <tr data-name="{{ c.name|lower }} {{ (c.company or '')|lower }}">
+            <td>
+              <div class="client-info">
+                <div class="client-avatar">{{ c.name[0]|upper }}</div>
+                <div>
+                  <div class="td-primary">{{ c.name }}</div>
+                  {% if c.company %}<div class="text-sm text-muted">{{ c.company }}</div>{% endif %}
+                </div>
+              </div>
+            </td>
+            <td>
+              {% if c.email %}
+                <a href="mailto:{{ c.email }}" style="color:var(--primary)">{{ c.email }}</a>
+              {% else %}—{% endif %}
+            </td>
+            <td>{{ c.phone or '—' }}</td>
+            <td><span class="badge badge-indigo">{{ c.invoice_count }}</span></td>
+            <td class="td-primary">${{ "%.2f"|format(c.total_paid) }}</td>
+            <td><span class="badge badge-blue">{{ c.meeting_count }}</span></td>
+            <td>
+              <div class="flex gap-2" style="justify-content:flex-end">
+                <a href="{{ url_for('client_detail', cid=c.id) }}" class="btn-icon" title="View">
+                  <i class="fa-solid fa-eye"></i>
+                </a>
+                <button class="btn-icon" title="Edit"
+                  onclick='openClientModal({{ {
+                    "id": c.id,
+                    "name": c.name,
+                    "company": c.company,
+                    "email": c.email,
+                    "phone": c.phone,
+                    "notes": c.notes
+                  } | tojson }})'>
+                  <i class="fa-solid fa-pen"></i>
+                </button>
+                <button class="btn-icon danger" title="Delete"
+                  onclick="deleteClient({{ c.id }}, this)">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr>
+            <td colspan="7">
+              <div class="table-empty">
+                <i class="fa-solid fa-users"></i>
+                No clients yet. Click "Add Client" to get started.
+              </div>
+            </td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Client Modal -->
+<div class="modal-overlay" id="client-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="client-modal-title">Add Client</div>
+      <button class="modal-close" onclick="closeModal('client-modal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="client-id">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Full Name <span class="req">*</span></label>
+          <input type="text" id="client-name" class="form-control" placeholder="Jane Smith">
+          <div class="form-error" id="err-client-name">Name is required</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Company</label>
+          <input type="text" id="client-company" class="form-control" placeholder="Acme Corp">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input type="email" id="client-email" class="form-control" placeholder="jane@acme.com">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Phone</label>
+          <input type="tel" id="client-phone" class="form-control" placeholder="+1 555 000 0000">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Notes</label>
+        <textarea id="client-notes" class="form-control" placeholder="Any notes about this client..."></textarea>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+        <button class="btn btn-ghost" onclick="closeModal('client-modal')">Cancel</button>
+        <button class="btn btn-primary" id="save-client-btn" onclick="saveClient()">
+          <i class="fa-solid fa-floppy-disk"></i> Save Client
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  if (new URLSearchParams(window.location.search).get('new') === '1') {
+    openClientModal();
+    history.replaceState({}, '', window.location.pathname);
+  }
+});
+
+function openClientModal(client = null) {
+  const isEdit = client !== null;
+  document.getElementById('client-modal-title').textContent = isEdit ? 'Edit Client' : 'Add Client';
+  document.getElementById('client-id').value = isEdit ? client.id : '';
+  document.getElementById('client-name').value = isEdit ? client.name : '';
+  document.getElementById('client-company').value = isEdit ? (client.company || '') : '';
+  document.getElementById('client-email').value = isEdit ? (client.email || '') : '';
+  document.getElementById('client-phone').value = isEdit ? (client.phone || '') : '';
+  document.getElementById('client-notes').value = isEdit ? (client.notes || '') : '';
+  clearErrors(['err-client-name']);
+  openModal('client-modal');
+}
+
+async function saveClient() {
+  const id = document.getElementById('client-id').value;
+  const name = document.getElementById('client-name').value.trim();
+  if (!name) { showError('err-client-name'); return; }
+
+  const data = {
+    name,
+    company: document.getElementById('client-company').value.trim(),
+    email: document.getElementById('client-email').value.trim(),
+    phone: document.getElementById('client-phone').value.trim(),
+    notes: document.getElementById('client-notes').value.trim(),
+  };
+
+  const btn = document.getElementById('save-client-btn');
+  btn.disabled = true;
+  const url = id ? `/api/clients/${id}` : '/api/clients';
+  const res = await apiCall(url, id ? 'PUT' : 'POST', data);
+  btn.disabled = false;
+
+  if (res.success) {
+    closeModal('client-modal');
+    showToast(id ? 'Client updated' : 'Client added', 'success');
+    setTimeout(() => location.reload(), 600);
+  } else {
+    showToast(res.error || 'Something went wrong', 'error');
+  }
+}
+
+async function deleteClient(id, btn) {
+  if (!confirm('Delete this client? Their invoices and meetings will remain but will be unlinked.')) return;
+  const res = await apiCall(`/api/clients/${id}`, 'DELETE');
+  if (res.success) {
+    btn.closest('tr').remove();
+    showToast('Client deleted', 'success');
+    const rows = document.querySelectorAll('#clients-tbody tr[data-name]').length;
+    document.getElementById('client-count').textContent = rows + ' client' + (rows !== 1 ? 's' : '');
+  } else {
+    showToast(res.error || 'Delete failed', 'error');
+  }
+}
+
+function searchClients(query) {
+  const q = query.toLowerCase();
+  const rows = document.querySelectorAll('#clients-tbody tr[data-name]');
+  let visible = 0;
+  rows.forEach(row => {
+    const match = !q || row.dataset.name.includes(q);
+    row.style.display = match ? '' : 'none';
+    if (match) visible++;
+  });
+  document.getElementById('client-count').textContent = visible + ' client' + (visible !== 1 ? 's' : '');
+}
+</script>
+{% endblock %}

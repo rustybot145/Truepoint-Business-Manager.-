@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+{% block title %}Meetings{% endblock %}
+{% block page_title %}Meetings{% endblock %}
+{% block page_subtitle %}Schedule and manage client meetings{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary" onclick="openMeetingModal()">
+  <i class="fa-solid fa-plus"></i> New Meeting
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-toolbar-left">
+    <div class="tabs">
+      <button class="tab-btn active" onclick="filterMeetings('all', this)">All</button>
+      <button class="tab-btn" onclick="filterMeetings('upcoming', this)">Upcoming</button>
+      <button class="tab-btn" onclick="filterMeetings('completed', this)">Completed</button>
+    </div>
+  </div>
+  <div class="flex gap-2">
+    <span id="meeting-count" class="badge badge-gray"></span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table id="meetings-table">
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Client</th>
+          <th>Date</th>
+          <th>Time</th>
+          <th>Duration</th>
+          <th>Link</th>
+          <th>Status</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="meetings-tbody">
+        {% if meetings %}
+          {% for m in meetings %}
+          <tr data-completed="{{ m.completed }}" data-date="{{ m.date }}">
+            <td class="td-primary {% if m.completed %}completed-text{% endif %}">{{ m.title }}</td>
+            <td>{{ m.client_name or '—' }}</td>
+            <td>{{ m.date }}</td>
+            <td>{{ m.time }}</td>
+            <td>{{ m.duration }} min</td>
+            <td>
+              {% if m.meeting_link %}
+                <a href="{{ m.meeting_link }}" target="_blank" class="badge badge-indigo">
+                  <i class="fa-solid fa-video"></i> Join
+                </a>
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {% if m.completed %}
+                <span class="badge badge-green"><i class="fa-solid fa-check"></i> Done</span>
+              {% else %}
+                <span class="badge badge-blue"><i class="fa-regular fa-clock"></i> Scheduled</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="flex gap-2" style="justify-content:flex-end">
+                {% if not m.completed %}
+                <button class="btn-icon success" title="Mark complete"
+                  onclick="completeMeeting({{ m.id }}, this)">
+                  <i class="fa-solid fa-check"></i>
+                </button>
+                {% endif %}
+                <button class="btn-icon" title="Edit"
+                  onclick='openMeetingModal({{ {
+                    "id": m.id,
+                    "title": m.title,
+                    "client_id": m.client_id,
+                    "client_name": m.client_name,
+                    "date": m.date,
+                    "time": m.time,
+                    "duration": m.duration,
+                    "notes": m.notes,
+                    "meeting_link": m.meeting_link,
+                    "completed": m.completed
+                  } | tojson }})'>
+                  <i class="fa-solid fa-pen"></i>
+                </button>
+                <button class="btn-icon danger" title="Delete"
+                  onclick="deleteMeeting({{ m.id }}, this)">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr>
+            <td colspan="8">
+              <div class="table-empty">
+                <i class="fa-regular fa-calendar-xmark"></i>
+                No meetings yet. Click "New Meeting" to add one.
+              </div>
+            </td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Meeting Modal -->
+<div class="modal-overlay" id="meeting-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="meeting-modal-title">New Meeting</div>
+      <button class="modal-close" onclick="closeModal('meeting-modal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="meeting-id">
+      <div class="form-group">
+        <label class="form-label">Title <span class="req">*</span></label>
+        <input type="text" id="meeting-title" class="form-control" placeholder="e.g. Strategy call with Acme Co.">
+        <div class="form-error" id="err-meeting-title">Title is required</div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Client</label>
+          <select id="meeting-client" class="form-control" onchange="syncClientName()">
+            <option value="">— Select client —</option>
+            {% for c in clients %}
+            <option value="{{ c.id }}" data-name="{{ c.name }}">{{ c.name }}{% if c.company %} ({{ c.company }}){% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Client Name (manual)</label>
+          <input type="text" id="meeting-client-name" class="form-control" placeholder="Or type manually">
+        </div>
+      </div>
+      <div class="form-row cols-3">
+        <div class="form-group">
+          <label class="form-label">Date <span class="req">*</span></label>
+          <input type="date" id="meeting-date" class="form-control">
+          <div class="form-error" id="err-meeting-date">Date is required</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Time <span class="req">*</span></label>
+          <input type="time" id="meeting-time" class="form-control">
+          <div class="form-error" id="err-meeting-time">Time is required</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Duration (min)</label>
+          <select id="meeting-duration" class="form-control">
+            <option value="15">15 min</option>
+            <option value="30">30 min</option>
+            <option value="45">45 min</option>
+            <option value="60" selected>60 min</option>
+            <option value="90">90 min</option>
+            <option value="120">2 hours</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Meeting Link</label>
+        <input type="url" id="meeting-link" class="form-control" placeholder="https://zoom.us/j/... or meet.google.com/...">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Notes</label>
+        <textarea id="meeting-notes" class="form-control" placeholder="Agenda, talking points..."></textarea>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+        <button class="btn btn-ghost" onclick="closeModal('meeting-modal')">Cancel</button>
+        <button class="btn btn-primary" id="save-meeting-btn" onclick="saveMeeting()">
+          <i class="fa-solid fa-floppy-disk"></i> Save Meeting
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function syncClientName() {
+  const sel = document.getElementById('meeting-client');
+  const opt = sel.options[sel.selectedIndex];
+  if (opt && opt.dataset.name) {
+    document.getElementById('meeting-client-name').value = opt.dataset.name;
+  }
+}
+
+function openMeetingModal(meeting = null) {
+  const isEdit = meeting !== null;
+  document.getElementById('meeting-modal-title').textContent = isEdit ? 'Edit Meeting' : 'New Meeting';
+  document.getElementById('meeting-id').value = isEdit ? meeting.id : '';
+  document.getElementById('meeting-title').value = isEdit ? meeting.title : '';
+  document.getElementById('meeting-client').value = isEdit ? (meeting.client_id || '') : '';
+  document.getElementById('meeting-client-name').value = isEdit ? (meeting.client_name || '') : '';
+  document.getElementById('meeting-date').value = isEdit ? meeting.date : '';
+  document.getElementById('meeting-time').value = isEdit ? meeting.time : '';
+  document.getElementById('meeting-duration').value = isEdit ? meeting.duration : '60';
+  document.getElementById('meeting-link').value = isEdit ? (meeting.meeting_link || '') : '';
+  document.getElementById('meeting-notes').value = isEdit ? (meeting.notes || '') : '';
+  clearErrors(['err-meeting-title','err-meeting-date','err-meeting-time']);
+  openModal('meeting-modal');
+}
+
+async function saveMeeting() {
+  const id = document.getElementById('meeting-id').value;
+  const title = document.getElementById('meeting-title').value.trim();
+  const date = document.getElementById('meeting-date').value;
+  const time = document.getElementById('meeting-time').value;
+
+  let valid = true;
+  if (!title) { showError('err-meeting-title'); valid = false; }
+  if (!date)  { showError('err-meeting-date');  valid = false; }
+  if (!time)  { showError('err-meeting-time');  valid = false; }
+  if (!valid) return;
+
+  const data = {
+    title,
+    client_id: document.getElementById('meeting-client').value || null,
+    client_name: document.getElementById('meeting-client-name').value.trim(),
+    date,
+    time,
+    duration: document.getElementById('meeting-duration').value,
+    meeting_link: document.getElementById('meeting-link').value.trim(),
+    notes: document.getElementById('meeting-notes').value.trim(),
+    completed: 0,
+  };
+
+  const btn = document.getElementById('save-meeting-btn');
+  btn.disabled = true;
+
+  const url = id ? `/api/meetings/${id}` : '/api/meetings';
+  const method = id ? 'PUT' : 'POST';
+  const res = await apiCall(url, method, data);
+
+  btn.disabled = false;
+  if (res.success) {
+    closeModal('meeting-modal');
+    showToast(id ? 'Meeting updated' : 'Meeting created', 'success');
+    setTimeout(() => location.reload(), 600);
+  } else {
+    showToast(res.error || 'Something went wrong', 'error');
+  }
+}
+
+async function deleteMeeting(id, btn) {
+  if (!confirm('Delete this meeting?')) return;
+  const res = await apiCall(`/api/meetings/${id}`, 'DELETE');
+  if (res.success) {
+    btn.closest('tr').remove();
+    showToast('Meeting deleted', 'success');
+    updateMeetingCount();
+  } else {
+    showToast(res.error || 'Delete failed', 'error');
+  }
+}
+
+async function completeMeeting(id, btn) {
+  const res = await apiCall(`/api/meetings/${id}/complete`, 'POST');
+  if (res.success) {
+    showToast('Meeting marked complete', 'success');
+    setTimeout(() => location.reload(), 600);
+  } else {
+    showToast(res.error || 'Failed', 'error');
+  }
+}
+
+function filterMeetings(filter, tabEl) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  tabEl.classList.add('active');
+  const rows = document.querySelectorAll('#meetings-tbody tr[data-date]');
+  const today = new Date().toISOString().split('T')[0];
+  rows.forEach(row => {
+    const completed = row.dataset.completed === '1';
+    const date = row.dataset.date;
+    if (filter === 'all') row.style.display = '';
+    else if (filter === 'upcoming') row.style.display = (!completed && date >= today) ? '' : 'none';
+    else if (filter === 'completed') row.style.display = completed ? '' : 'none';
+  });
+  updateMeetingCount();
+}
+
+function updateMeetingCount() {
+  const visible = document.querySelectorAll('#meetings-tbody tr[data-date]:not([style*="none"])').length;
+  document.getElementById('meeting-count').textContent = visible + ' meeting' + (visible !== 1 ? 's' : '');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  updateMeetingCount();
+  if (new URLSearchParams(window.location.search).get('new') === '1') {
+    openMeetingModal();
+    history.replaceState({}, '', window.location.pathname);
+  }
+});
+</script>
+{% endblock %}

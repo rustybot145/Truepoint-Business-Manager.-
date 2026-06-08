@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}TruePoint{% endblock %} — TruePoint</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <style>
+    /* Ambient background glow */
+    body::before {
+      content: '';
+      position: fixed;
+      top: -200px; left: -200px;
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, rgba(0,200,150,0.07) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    body::after {
+      content: '';
+      position: fixed;
+      bottom: -150px; right: -150px;
+      width: 500px; height: 500px;
+      background: radial-gradient(circle, rgba(139,92,246,0.06) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .app { position: relative; z-index: 1; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+<div class="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <img src="{{ url_for('static', filename='img/hf_20260512_002223_55d776ae-4e4f-4033-81bf-b15e1e63c30a-removebg-preview.png') }}" alt="TruePoint" style="width:36px;height:36px;display:block;flex-shrink:0;object-fit:contain;">
+      <div class="logo-text">True<span>Point</span></div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Overview</div>
+      <a href="{{ url_for('dashboard') }}"
+         class="nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}">
+        <i class="fa-solid fa-house"></i><span>Dashboard</span>
+      </a>
+      <a href="{{ url_for('meetings') }}"
+         class="nav-item {% if request.endpoint == 'meetings' %}active{% endif %}">
+        <i class="fa-solid fa-calendar-days"></i><span>Meetings</span>
+      </a>
+
+      <div class="nav-section-label">Finance</div>
+      <a href="{{ url_for('finances') }}"
+         class="nav-item {% if request.endpoint == 'finances' %}active{% endif %}">
+        <i class="fa-solid fa-file-invoice-dollar"></i><span>Invoices</span>
+      </a>
+      <a href="{{ url_for('expenses') }}"
+         class="nav-item {% if request.endpoint == 'expenses' %}active{% endif %}">
+        <i class="fa-solid fa-receipt"></i><span>Expenses</span>
+      </a>
+
+      <div class="nav-section-label">CRM</div>
+      <a href="{{ url_for('clients') }}"
+         class="nav-item {% if request.endpoint in ['clients','client_detail'] %}active{% endif %}">
+        <i class="fa-solid fa-users"></i><span>Clients</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-info">TruePoint v1.0</div>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <div class="main">
+    <header class="topbar">
+      <div>
+        <div class="topbar-title">{% block page_title %}Dashboard{% endblock %}</div>
+        <div class="topbar-subtitle">{% block page_subtitle %}{% endblock %}</div>
+      </div>
+      <div class="topbar-right">
+        {% block topbar_actions %}{% endblock %}
+      </div>
+    </header>
+
+    <div class="content">
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  // Global Chart.js dark theme defaults
+  Chart.defaults.color = '#3d6a52';
+  Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+  Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+</script>
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

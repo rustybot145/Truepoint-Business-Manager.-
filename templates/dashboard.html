@@ -1,0 +1,328 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block page_subtitle %}{{ today.strftime('%A, %B %d, %Y') }}{% endblock %}
+
+{% block content %}
+
+<!-- ① Overdue Alert Banner -->
+{% if overdue_count > 0 %}
+<div class="alert-banner" id="overdue-banner">
+  <div class="alert-banner-left">
+    <div class="alert-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+    <div>
+      <strong>{{ overdue_count }} overdue invoice{{ 's' if overdue_count != 1 }}</strong>
+      <span class="alert-sub"> — ${{ "%.2f"|format(overdue_amount) }} past due</span>
+    </div>
+  </div>
+  <div class="alert-banner-right">
+    <a href="{{ url_for('finances') }}" class="btn btn-sm alert-action-btn">
+      <i class="fa-solid fa-arrow-right"></i> View Invoices
+    </a>
+    <button class="btn-icon" onclick="dismissBanner()" style="border-color:rgba(244,63,94,0.25);color:var(--danger)">
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+  </div>
+</div>
+{% endif %}
+
+<!-- Stat Cards — Net Profit first and larger, 4 regular cards to the right -->
+<div class="stats-grid" style="grid-template-columns: 1.35fr 1fr 1fr 1fr 1fr; align-items:stretch;">
+
+  <!-- Net Profit — featured card -->
+  <div class="stat-card stat-card-profit stat-card-featured {% if monthly_profit >= 0 %}profit-pos{% else %}profit-neg{% endif %}">
+    <div class="stat-card-top">
+      <div>
+        <div class="stat-label" style="margin-bottom:8px">Net Profit This Month</div>
+        <div class="stat-value stat-value-lg">
+          {{ '+' if monthly_profit >= 0 else '-' }}${{ "%.0f"|format(monthly_profit|abs) }}
+        </div>
+      </div>
+      <div class="stat-icon {% if monthly_profit >= 0 %}green{% else %}red{% endif %}" style="width:52px;height:52px;font-size:20px">
+        <i class="fa-solid {% if monthly_profit >= 0 %}fa-arrow-trend-up{% else %}fa-arrow-trend-down{% endif %}"></i>
+      </div>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--border);margin:14px 0 10px">
+    <div style="display:flex;gap:20px">
+      <div>
+        <div class="text-sm text-muted">Revenue</div>
+        <div style="font-size:13.5px;font-weight:700;color:var(--primary)">${{ "%.0f"|format(monthly_income) }}</div>
+      </div>
+      <div>
+        <div class="text-sm text-muted">Expenses</div>
+        <div style="font-size:13.5px;font-weight:700;color:var(--warning)">${{ "%.0f"|format(monthly_expenses) }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-card-top">
+      <div>
+        <div class="stat-value">{{ total_clients }}</div>
+        <div class="stat-label">Total Clients</div>
+      </div>
+      <div class="stat-icon indigo"><i class="fa-solid fa-users"></i></div>
+    </div>
+    <a href="{{ url_for('clients') }}" class="text-sm" style="color:var(--primary)">View all →</a>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-card-top">
+      <div>
+        <div class="stat-value">{{ active_projects }}</div>
+        <div class="stat-label">Active Projects</div>
+      </div>
+      <div class="stat-icon blue"><i class="fa-solid fa-diagram-project"></i></div>
+    </div>
+    <a href="{{ url_for('finances') }}" class="text-sm" style="color:var(--info)">View invoices →</a>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-card-top">
+      <div>
+        <div class="stat-value">${{ "%.0f"|format(monthly_income) }}</div>
+        <div class="stat-label">Revenue This Month</div>
+      </div>
+      <div class="stat-icon green"><i class="fa-solid fa-arrow-trend-up"></i></div>
+    </div>
+    <div class="text-sm text-muted">Paid invoices</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-card-top">
+      <div>
+        <div class="stat-value">${{ "%.0f"|format(monthly_expenses) }}</div>
+        <div class="stat-label">Expenses This Month</div>
+      </div>
+      <div class="stat-icon amber"><i class="fa-solid fa-arrow-trend-down"></i></div>
+    </div>
+    <a href="{{ url_for('expenses') }}" class="text-sm" style="color:var(--warning)">View expenses →</a>
+  </div>
+
+</div>
+
+<!-- Dashboard Grid -->
+<div class="dashboard-grid">
+
+  <!-- Revenue vs Expenses Chart -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Revenue vs Expenses</div>
+      <span class="badge badge-gray">Last 6 months</span>
+    </div>
+    <div class="card-body">
+      <canvas id="revenueChart" height="180"></canvas>
+    </div>
+  </div>
+
+  <!-- Upcoming Meetings -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Upcoming This Week</div>
+      <a href="{{ url_for('meetings') }}" class="btn btn-ghost btn-sm">
+        <i class="fa-solid fa-plus"></i> Add
+      </a>
+    </div>
+    <div class="card-body">
+      {% if upcoming %}
+        <div class="meeting-list">
+          {% for m in upcoming %}
+          <div class="meeting-item">
+            <div class="meeting-date-block">
+              <div class="day">{{ m.date[8:10]|int }}</div>
+              <div class="mon">{% set months = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] %}{{ months[m.date[5:7]|int] }}</div>
+            </div>
+            <div class="meeting-info">
+              <div class="meeting-title">{{ m.title }}</div>
+              <div class="meeting-meta">
+                {{ m.time }} · {{ m.duration }}min
+                {% if m.client_name %} · {{ m.client_name }}{% endif %}
+              </div>
+              {% if m.meeting_link %}
+              <a href="{{ m.meeting_link }}" target="_blank" class="meeting-link-btn mt-1">
+                <i class="fa-solid fa-video"></i> Join meeting
+              </a>
+              {% endif %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="table-empty">
+          <i class="fa-regular fa-calendar"></i>
+          No meetings scheduled this week
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Outstanding Invoices -->
+  <div class="card dashboard-full">
+    <div class="card-header">
+      <div class="card-title">Outstanding Invoices</div>
+      <a href="{{ url_for('finances') }}" class="text-sm" style="color:var(--primary)">View all →</a>
+    </div>
+    <div class="card-body pt-0">
+      {% if outstanding %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Client</th>
+              <th>Project</th>
+              <th>Amount</th>
+              <th>Date Sent</th>
+              <th>Due Date</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in outstanding %}
+            <tr>
+              <td class="td-primary">{{ inv.client_name }}</td>
+              <td>{{ inv.project_name }}</td>
+              <td class="td-primary">${{ "%.2f"|format(inv.amount) }}</td>
+              <td>{{ inv.date_sent }}</td>
+              <td>{{ inv.due_date }}</td>
+              <td>
+                {% if inv.status == 'overdue' %}
+                  <span class="badge badge-red"><i class="fa-solid fa-circle-exclamation"></i> Overdue</span>
+                {% else %}
+                  <span class="badge badge-amber"><i class="fa-regular fa-clock"></i> Unpaid</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+        <div class="table-empty">
+          <i class="fa-solid fa-circle-check"></i>
+          No outstanding invoices — you're all caught up!
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Dismiss overdue banner for this session
+function dismissBanner() {
+  const el = document.getElementById('overdue-banner');
+  if (!el) return;
+  el.style.transition = 'opacity .3s, transform .3s, max-height .4s, margin .4s, padding .4s';
+  el.style.opacity = '0';
+  el.style.transform = 'translateY(-8px)';
+  el.style.maxHeight = '0';
+  el.style.margin = '0';
+  el.style.padding = '0';
+  el.style.overflow = 'hidden';
+  setTimeout(() => el.remove(), 420);
+  sessionStorage.setItem('banner-dismissed', 'true');
+}
+// Keep dismissed if user already closed it this session
+if (sessionStorage.getItem('banner-dismissed') === 'true') {
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('overdue-banner')?.remove();
+  });
+}
+
+const labels  = {{ chart_labels  | tojson }};
+const income  = {{ chart_income  | tojson }};
+const expenses = {{ chart_expenses | tojson }};
+
+const ctx = document.getElementById('revenueChart').getContext('2d');
+
+// Gradient fills
+const gRevenue = ctx.createLinearGradient(0, 0, 0, 260);
+gRevenue.addColorStop(0, 'rgba(0,200,150,0.85)');
+gRevenue.addColorStop(1, 'rgba(0,200,150,0.25)');
+
+const gExpense = ctx.createLinearGradient(0, 0, 0, 260);
+gExpense.addColorStop(0, 'rgba(139,92,246,0.85)');
+gExpense.addColorStop(1, 'rgba(139,92,246,0.25)');
+
+new Chart(ctx, {
+  type: 'bar',
+  data: {
+    labels,
+    datasets: [
+      {
+        label: 'Revenue',
+        data: income,
+        backgroundColor: gRevenue,
+        borderRadius: 8,
+        borderSkipped: false,
+        borderWidth: 0,
+        barPercentage: 0.55,
+      },
+      {
+        label: 'Expenses',
+        data: expenses,
+        backgroundColor: gExpense,
+        borderRadius: 8,
+        borderSkipped: false,
+        borderWidth: 0,
+        barPercentage: 0.55,
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: true,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: {
+        position: 'top',
+        labels: {
+          font: { size: 12, weight: '600' },
+          color: '#7ab89c',
+          boxWidth: 10,
+          boxHeight: 10,
+          borderRadius: 3,
+          padding: 18,
+          usePointStyle: true,
+          pointStyle: 'rectRounded',
+        }
+      },
+      tooltip: {
+        backgroundColor: '#0c1e16',
+        borderColor: 'rgba(0,200,150,0.2)',
+        borderWidth: 1,
+        titleColor: '#f0faf6',
+        bodyColor: '#7ab89c',
+        padding: 12,
+        cornerRadius: 10,
+        displayColors: true,
+        boxWidth: 8,
+        boxHeight: 8,
+        callbacks: {
+          label: c => `  ${c.dataset.label}  $${c.parsed.y.toLocaleString('en-US',{minimumFractionDigits:2})}`
+        }
+      }
+    },
+    scales: {
+      x: {
+        grid: { display: false },
+        border: { display: false },
+        ticks: { font: { size: 12 }, color: '#3d6a52' }
+      },
+      y: {
+        grid: { color: 'rgba(255,255,255,0.04)', drawBorder: false },
+        border: { display: false },
+        ticks: {
+          font: { size: 12 },
+          color: '#3d6a52',
+          maxTicksLimit: 5,
+          callback: v => '$' + v.toLocaleString()
+        }
+      }
+    }
+  }
+});
+</script>
+{% endblock %}

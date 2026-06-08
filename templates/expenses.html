@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+{% block title %}Expenses{% endblock %}
+{% block page_title %}Expenses{% endblock %}
+{% block page_subtitle %}Track and categorize business expenses{% endblock %}
+
+{% block topbar_actions %}
+<a href="/api/expenses/export" class="btn btn-ghost">
+  <i class="fa-solid fa-download"></i> Export CSV
+</a>
+<button class="btn btn-primary" onclick="openExpenseModal()">
+  <i class="fa-solid fa-plus"></i> Log Expense
+</button>
+{% endblock %}
+
+{% block content %}
+
+<!-- Subscriptions Panel -->
+{% if subscriptions %}
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="card-title">Monthly Subscriptions</div>
+      <span class="badge badge-indigo">{{ subscriptions|length }}</span>
+    </div>
+    <span class="text-sm text-muted">Auto-tracked recurring payments</span>
+  </div>
+  <div class="card-body pt-0">
+    <div class="sub-list">
+      {% for sub in subscriptions %}
+      <div class="sub-row">
+        <div class="sub-icon">
+          <i class="fa-solid fa-rotate"></i>
+        </div>
+        <div class="sub-info">
+          <div class="sub-name">{{ sub.description or 'Unnamed subscription' }}</div>
+          <div class="sub-meta">
+            <span class="cat-pill cat-{{ sub.category }}">{{ sub.category|title }}</span>
+            <span class="badge {% if sub.recurring_interval == 'monthly' %}badge-indigo{% elif sub.recurring_interval == 'yearly' %}badge-blue{% else %}badge-gray{% endif %}" style="font-size:10.5px">
+              <i class="fa-solid fa-rotate"></i> {{ sub.recurring_interval|title }}
+            </span>
+            <span class="text-sm text-muted">Last: {{ sub.last_logged }}</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+          <div class="sub-amount">${{ "%.2f"|format(sub.amount) }}</div>
+          {% if sub.logged_this_month %}
+            <span class="badge badge-green"><i class="fa-solid fa-check"></i> Logged</span>
+          {% else %}
+            <span class="badge badge-amber"><i class="fa-solid fa-clock"></i> Due</span>
+            <button class="btn btn-sm btn-primary" onclick="relogExpense({{ sub.latest_id }}, this)">
+              <i class="fa-solid fa-bolt"></i> Log Now
+            </button>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Month filter & summary -->
+<div class="page-toolbar">
+  <div class="page-toolbar-left">
+    <form method="get" style="display:flex;align-items:center;gap:8px">
+      <label class="form-label" style="margin:0;white-space:nowrap">Month:</label>
+      <input type="month" name="month" value="{{ filter_month }}" class="form-control"
+             style="width:160px" onchange="this.form.submit()">
+    </form>
+  </div>
+  <div class="flex gap-2">
+    <span class="text-sm text-muted">Total:</span>
+    <strong>${{ "%.2f"|format(monthly_total) }}</strong>
+  </div>
+</div>
+
+<!-- Category breakdown -->
+{% if category_totals %}
+<div class="cat-grid">
+  {% for row in category_totals %}
+  <div class="cat-card">
+    <div class="cat-card-name">{{ row.category }}</div>
+    <div class="cat-card-amount">${{ "%.0f"|format(row.total) }}</div>
+    <div class="progress mt-2">
+      <div class="progress-bar" style="width:{{ [(row.total / monthly_total * 100), 100]|min|int }}%"></div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Expenses table -->
+<div class="card">
+  <div class="card-header">
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="card-title">Expenses</div>
+      <span class="badge badge-gray">{{ expenses|length }}</span>
+    </div>
+    <div class="tabs">
+      <button class="tab-btn active" onclick="filterExpenses('all', this)">All</button>
+      <button class="tab-btn" onclick="filterExpenses('recurring', this)">Subscriptions</button>
+      <button class="tab-btn" onclick="filterExpenses('one-time', this)">One-time</button>
+    </div>
+  </div>
+  <div class="card-body pt-0">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Category</th>
+            <th>Amount</th>
+            <th>Description</th>
+            <th>Type</th>
+            <th>Receipt Note</th>
+            <th style="text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="expenses-tbody">
+          {% if expenses %}
+            {% for e in expenses %}
+            <tr data-type="{{ 'recurring' if e.is_recurring else 'one-time' }}">
+              <td>{{ e.date }}</td>
+              <td><span class="cat-pill cat-{{ e.category }}">{{ e.category|title }}</span></td>
+              <td class="td-primary">${{ "%.2f"|format(e.amount) }}</td>
+              <td>{{ e.description or '—' }}</td>
+              <td>
+                {% if e.is_recurring %}
+                  <span class="badge badge-indigo" style="font-size:10.5px">
+                    <i class="fa-solid fa-rotate"></i> {{ e.recurring_interval|title }}
+                  </span>
+                {% else %}
+                  <span class="badge badge-gray" style="font-size:10.5px">One-time</span>
+                {% endif %}
+              </td>
+              <td class="text-muted">{{ e.receipt_note or '—' }}</td>
+              <td>
+                <div class="flex gap-2" style="justify-content:flex-end">
+                  <button class="btn-icon" title="Edit"
+                    onclick='openExpenseModal({{ {
+                      "id": e.id,
+                      "date": e.date,
+                      "amount": e.amount,
+                      "category": e.category,
+                      "description": e.description,
+                      "receipt_note": e.receipt_note,
+                      "is_recurring": e.is_recurring,
+                      "recurring_interval": e.recurring_interval
+                    } | tojson }})'>
+                    <i class="fa-solid fa-pen"></i>
+                  </button>
+                  <button class="btn-icon danger" title="Delete"
+                    onclick="deleteExpense({{ e.id }}, this)">
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="7">
+                <div class="table-empty">
+                  <i class="fa-solid fa-receipt"></i>
+                  No expenses logged for this month.
+                </div>
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Expense Modal -->
+<div class="modal-overlay" id="expense-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="expense-modal-title">Log Expense</div>
+      <button class="modal-close" onclick="closeModal('expense-modal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="expense-id">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Date <span class="req">*</span></label>
+          <input type="date" id="expense-date" class="form-control">
+          <div class="form-error" id="err-expense-date">Date is required</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Amount ($) <span class="req">*</span></label>
+          <input type="number" id="expense-amount" class="form-control" min="0.01" step="0.01" placeholder="0.00">
+          <div class="form-error" id="err-expense-amount">Enter a valid amount</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Category <span class="req">*</span></label>
+        <select id="expense-category" class="form-control">
+          <option value="">— Select category —</option>
+          <option value="software">Software</option>
+          <option value="ads">Ads</option>
+          <option value="contractor">Contractor</option>
+          <option value="travel">Travel</option>
+          <option value="equipment">Equipment</option>
+          <option value="other">Other</option>
+        </select>
+        <div class="form-error" id="err-expense-category">Category is required</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <input type="text" id="expense-description" class="form-control" placeholder="e.g. Figma subscription, Google Ads...">
+      </div>
+
+      <!-- Recurring toggle -->
+      <div class="form-group">
+        <label class="form-label">Payment Type</label>
+        <div class="toggle-group">
+          <label class="toggle">
+            <input type="checkbox" id="expense-recurring" onchange="toggleRecurring(this)">
+            <span class="toggle-slider"></span>
+          </label>
+          <span id="recurring-label">One-time expense</span>
+        </div>
+      </div>
+
+      <!-- Interval — shown only when recurring is on -->
+      <div class="form-group" id="interval-group" style="display:none">
+        <label class="form-label">Billing Frequency</label>
+        <div class="interval-options">
+          <label class="interval-option">
+            <input type="radio" name="expense-interval" value="weekly"> Weekly
+          </label>
+          <label class="interval-option active">
+            <input type="radio" name="expense-interval" value="monthly" checked> Monthly
+          </label>
+          <label class="interval-option">
+            <input type="radio" name="expense-interval" value="yearly"> Yearly
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Receipt Note</label>
+        <input type="text" id="expense-receipt" class="form-control" placeholder="Receipt #, reference, or note">
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+        <button class="btn btn-ghost" onclick="closeModal('expense-modal')">Cancel</button>
+        <button class="btn btn-primary" id="save-expense-btn" onclick="saveExpense()">
+          <i class="fa-solid fa-floppy-disk"></i> Save Expense
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  if (new URLSearchParams(window.location.search).get('new') === '1') {
+    openExpenseModal();
+    history.replaceState({}, '', window.location.pathname);
+  }
+});
+
+function toggleRecurring(cb) {
+  const on = cb.checked;
+  document.getElementById('recurring-label').textContent = on ? 'Recurring payment' : 'One-time expense';
+  document.getElementById('recurring-label').style.color = on ? 'var(--primary)' : '';
+  document.getElementById('interval-group').style.display = on ? 'block' : 'none';
+}
+
+function getSelectedInterval() {
+  const radios = document.querySelectorAll('input[name="expense-interval"]');
+  for (const r of radios) { if (r.checked) return r.value; }
+  return 'monthly';
+}
+
+function openExpenseModal(expense = null) {
+  const isEdit = expense !== null;
+  document.getElementById('expense-modal-title').textContent = isEdit ? 'Edit Expense' : 'Log Expense';
+  document.getElementById('expense-id').value = isEdit ? expense.id : '';
+  document.getElementById('expense-date').value = isEdit ? expense.date : new Date().toISOString().split('T')[0];
+  document.getElementById('expense-amount').value = isEdit ? expense.amount : '';
+  document.getElementById('expense-category').value = isEdit ? expense.category : '';
+  document.getElementById('expense-description').value = isEdit ? (expense.description || '') : '';
+  document.getElementById('expense-receipt').value = isEdit ? (expense.receipt_note || '') : '';
+
+  const isRecurring = isEdit ? !!expense.is_recurring : false;
+  document.getElementById('expense-recurring').checked = isRecurring;
+  toggleRecurring(document.getElementById('expense-recurring'));
+
+  if (isEdit && expense.recurring_interval) {
+    const radio = document.querySelector(`input[name="expense-interval"][value="${expense.recurring_interval}"]`);
+    if (radio) radio.checked = true;
+  }
+
+  // highlight selected interval option
+  syncIntervalUI();
+
+  clearErrors(['err-expense-date','err-expense-amount','err-expense-category']);
+  openModal('expense-modal');
+}
+
+function syncIntervalUI() {
+  document.querySelectorAll('.interval-option').forEach(opt => {
+    const radio = opt.querySelector('input');
+    opt.classList.toggle('active', radio.checked);
+  });
+}
+document.querySelectorAll('input[name="expense-interval"]').forEach(r => {
+  r.addEventListener('change', syncIntervalUI);
+});
+
+async function saveExpense() {
+  const id = document.getElementById('expense-id').value;
+  const date = document.getElementById('expense-date').value;
+  const amount = document.getElementById('expense-amount').value;
+  const category = document.getElementById('expense-category').value;
+
+  let valid = true;
+  if (!date)                   { showError('err-expense-date');     valid = false; }
+  if (!amount || +amount <= 0) { showError('err-expense-amount');   valid = false; }
+  if (!category)               { showError('err-expense-category'); valid = false; }
+  if (!valid) return;
+
+  const data = {
+    date, amount: parseFloat(amount), category,
+    description:    document.getElementById('expense-description').value.trim(),
+    receipt_note:   document.getElementById('expense-receipt').value.trim(),
+    is_recurring:   document.getElementById('expense-recurring').checked,
+    recurring_interval: getSelectedInterval(),
+  };
+
+  const btn = document.getElementById('save-expense-btn');
+  btn.disabled = true;
+  const url = id ? `/api/expenses/${id}` : '/api/expenses';
+  const res = await apiCall(url, id ? 'PUT' : 'POST', data);
+  btn.disabled = false;
+
+  if (res.success) {
+    closeModal('expense-modal');
+    showToast(id ? 'Expense updated' : 'Expense logged', 'success');
+    setTimeout(() => location.reload(), 600);
+  } else {
+    showToast(res.error || 'Something went wrong', 'error');
+  }
+}
+
+async function deleteExpense(id, btn) {
+  if (!confirm('Delete this expense?')) return;
+  const res = await apiCall(`/api/expenses/${id}`, 'DELETE');
+  if (res.success) {
+    btn.closest('tr').remove();
+    showToast('Expense deleted', 'success');
+  } else {
+    showToast(res.error || 'Delete failed', 'error');
+  }
+}
+
+async function relogExpense(id, btn) {
+  btn.disabled = true;
+  const res = await apiCall(`/api/expenses/${id}/relog`, 'POST');
+  btn.disabled = false;
+  if (res.success) {
+    showToast('Subscription logged for today!', 'success');
+    setTimeout(() => location.reload(), 700);
+  } else {
+    showToast(res.error || 'Failed to log', 'error');
+  }
+}
+
+function filterExpenses(filter, tabEl) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  tabEl.classList.add('active');
+  document.querySelectorAll('#expenses-tbody tr[data-type]').forEach(row => {
+    row.style.display = (filter === 'all' || row.dataset.type === filter) ? '' : 'none';
+  });
+}
+</script>
+{% endblock %}

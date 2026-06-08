@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+{% block title %}Invoices{% endblock %}
+{% block page_title %}Invoices & Revenue{% endblock %}
+{% block page_subtitle %}Track income, invoices, and monthly profit/loss{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary" onclick="openInvoiceModal()">
+  <i class="fa-solid fa-plus"></i> New Invoice
+</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary cards -->
+<div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">
+  <div class="stat-card">
+    <div class="stat-card-top">
+      <div>
+        <div class="stat-value">${{ "%.0f"|format(total_revenue) }}</div>
+        <div class="stat-label">Total Revenue (All Time)</div>
+      </div>
+      <div class="stat-icon green"><i class="fa-solid fa-circle-dollar-to-slot"></i></div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-card-top">
+      <div>
+        <div class="stat-value">${{ "%.0f"|format(outstanding_balance) }}</div>
+        <div class="stat-label">Outstanding Balance</div>
+      </div>
+      <div class="stat-icon amber"><i class="fa-regular fa-hourglass-half"></i></div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-card-top">
+      <div>
+        <div class="stat-value">${{ "%.0f"|format(overdue_total) }}</div>
+        <div class="stat-label">Overdue Amount</div>
+      </div>
+      <div class="stat-icon red"><i class="fa-solid fa-circle-exclamation"></i></div>
+    </div>
+  </div>
+</div>
+
+<div class="dashboard-grid" style="margin-bottom:24px">
+  <!-- P&L Chart -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Monthly Profit / Loss</div>
+      <span class="badge badge-gray">Last 6 months</span>
+    </div>
+    <div class="card-body">
+      <canvas id="plChart" height="180"></canvas>
+    </div>
+  </div>
+
+  <!-- P&L Summary table -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">P&L Breakdown</div>
+    </div>
+    <div class="card-body pt-0">
+      <table class="pl-table">
+        <thead>
+          <tr>
+            <th style="padding:12px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);border-bottom:1px solid var(--border)">Month</th>
+            <th style="padding:12px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);border-bottom:1px solid var(--border)">Income</th>
+            <th style="padding:12px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);border-bottom:1px solid var(--border)">Expenses</th>
+            <th style="padding:12px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);border-bottom:1px solid var(--border)">Profit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in monthly_data %}
+          <tr>
+            <td>{{ row.month }}</td>
+            <td style="color:var(--success)">${{ "%.0f"|format(row.income) }}</td>
+            <td style="color:var(--danger)">${{ "%.0f"|format(row.expenses) }}</td>
+            <td class="{{ 'profit' if row.profit >= 0 else 'loss' }}">
+              {{ '+' if row.profit >= 0 else '' }}${{ "%.0f"|format(row.profit) }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Invoices table -->
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">All Invoices</div>
+    <div class="flex gap-2">
+      <div class="tabs">
+        <button class="tab-btn active" onclick="filterInvoices('all', this)">All</button>
+        <button class="tab-btn" onclick="filterInvoices('paid', this)">Paid</button>
+        <button class="tab-btn" onclick="filterInvoices('unpaid', this)">Unpaid</button>
+        <button class="tab-btn" onclick="filterInvoices('overdue', this)">Overdue</button>
+      </div>
+    </div>
+  </div>
+  <div class="card-body pt-0">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Client</th>
+            <th>Project</th>
+            <th>Amount</th>
+            <th>Date Sent</th>
+            <th>Due Date</th>
+            <th>Status</th>
+            <th style="text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="invoices-tbody">
+          {% if invoices %}
+            {% for inv in invoices %}
+            <tr data-status="{{ inv.status }}">
+              <td>
+                <div class="client-info">
+                  <div class="client-avatar">{{ inv.client_name[0]|upper }}</div>
+                  <div>
+                    <div class="td-primary">{{ inv.client_name }}</div>
+                    {% if inv.company %}<div class="text-sm text-muted">{{ inv.company }}</div>{% endif %}
+                  </div>
+                </div>
+              </td>
+              <td>{{ inv.project_name }}</td>
+              <td class="td-primary">${{ "%.2f"|format(inv.amount) }}</td>
+              <td>{{ inv.date_sent }}</td>
+              <td>{{ inv.due_date }}</td>
+              <td>
+                <select class="form-control" style="width:auto;padding:4px 8px;font-size:12px"
+                  onchange="updateInvoiceStatus({{ inv.id }}, this.value, this)">
+                  <option value="unpaid" {% if inv.status=='unpaid' %}selected{% endif %}>Unpaid</option>
+                  <option value="paid"   {% if inv.status=='paid'   %}selected{% endif %}>Paid</option>
+                  <option value="overdue"{% if inv.status=='overdue'%}selected{% endif %}>Overdue</option>
+                </select>
+              </td>
+              <td>
+                <div class="flex gap-2" style="justify-content:flex-end">
+                  <button class="btn-icon" title="Edit"
+                    onclick='openInvoiceModal({{ {
+                      "id": inv.id,
+                      "client_id": inv.client_id,
+                      "client_name": inv.client_name,
+                      "project_name": inv.project_name,
+                      "amount": inv.amount,
+                      "date_sent": inv.date_sent,
+                      "due_date": inv.due_date,
+                      "status": inv.status
+                    } | tojson }})'>
+                    <i class="fa-solid fa-pen"></i>
+                  </button>
+                  <button class="btn-icon danger" title="Delete"
+                    onclick="deleteInvoice({{ inv.id }}, this)">
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="7">
+                <div class="table-empty">
+                  <i class="fa-solid fa-file-invoice-dollar"></i>
+                  No invoices yet. Click "New Invoice" to add one.
+                </div>
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Invoice Modal -->
+<div class="modal-overlay" id="invoice-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="invoice-modal-title">New Invoice</div>
+      <button class="modal-close" onclick="closeModal('invoice-modal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="invoice-id">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Client <span class="req">*</span></label>
+          <select id="invoice-client-select" class="form-control" onchange="syncInvoiceClient()">
+            <option value="">— Select client —</option>
+            {% for c in clients %}
+            <option value="{{ c.id }}" data-name="{{ c.name }}">{{ c.name }}{% if c.company %} ({{ c.company }}){% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Client Name (manual) <span class="req">*</span></label>
+          <input type="text" id="invoice-client-name" class="form-control" placeholder="Or type manually">
+          <div class="form-error" id="err-invoice-client">Client name is required</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Project Name <span class="req">*</span></label>
+        <input type="text" id="invoice-project" class="form-control" placeholder="e.g. Website Redesign, SEO Campaign">
+        <div class="form-error" id="err-invoice-project">Project name is required</div>
+      </div>
+      <div class="form-row cols-3">
+        <div class="form-group">
+          <label class="form-label">Amount ($) <span class="req">*</span></label>
+          <input type="number" id="invoice-amount" class="form-control" min="0.01" step="0.01" placeholder="0.00">
+          <div class="form-error" id="err-invoice-amount">Enter a valid amount</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date Sent <span class="req">*</span></label>
+          <input type="date" id="invoice-date-sent" class="form-control">
+          <div class="form-error" id="err-invoice-date">Date is required</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Due Date <span class="req">*</span></label>
+          <input type="date" id="invoice-due-date" class="form-control">
+          <div class="form-error" id="err-invoice-due">Due date is required</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Status</label>
+        <select id="invoice-status" class="form-control">
+          <option value="unpaid">Unpaid</option>
+          <option value="paid">Paid</option>
+          <option value="overdue">Overdue</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+        <button class="btn btn-ghost" onclick="closeModal('invoice-modal')">Cancel</button>
+        <button class="btn btn-primary" id="save-invoice-btn" onclick="saveInvoice()">
+          <i class="fa-solid fa-floppy-disk"></i> Save Invoice
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Chart
+const plCtx = document.getElementById('plChart').getContext('2d');
+const plData = {{ monthly_data | tojson }};
+
+const gIncome = plCtx.createLinearGradient(0, 0, 0, 260);
+gIncome.addColorStop(0, 'rgba(0,200,150,0.85)');
+gIncome.addColorStop(1, 'rgba(0,200,150,0.25)');
+
+const gExp = plCtx.createLinearGradient(0, 0, 0, 260);
+gExp.addColorStop(0, 'rgba(139,92,246,0.85)');
+gExp.addColorStop(1, 'rgba(139,92,246,0.25)');
+
+new Chart(plCtx, {
+  type: 'bar',
+  data: {
+    labels: plData.map(d => d.month),
+    datasets: [
+      { label: 'Income',   data: plData.map(d => d.income),   backgroundColor: gIncome, borderRadius: 8, borderSkipped: false, borderWidth: 0, barPercentage: 0.55 },
+      { label: 'Expenses', data: plData.map(d => d.expenses), backgroundColor: gExp,    borderRadius: 8, borderSkipped: false, borderWidth: 0, barPercentage: 0.55 },
+    ]
+  },
+  options: {
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: {
+        position: 'top',
+        labels: { font: { size: 12, weight: '600' }, color: '#7ab89c', boxWidth: 10, boxHeight: 10, padding: 18, usePointStyle: true, pointStyle: 'rectRounded' }
+      },
+      tooltip: {
+        backgroundColor: '#0c1e16',
+        borderColor: 'rgba(0,200,150,0.2)',
+        borderWidth: 1,
+        titleColor: '#f0faf6',
+        bodyColor: '#7ab89c',
+        padding: 12,
+        cornerRadius: 10,
+        callbacks: { label: c => `  ${c.dataset.label}  $${c.parsed.y.toLocaleString('en-US',{minimumFractionDigits:2})}` }
+      }
+    },
+    scales: {
+      x: { grid: { display: false }, border: { display: false }, ticks: { font: { size: 11 }, color: '#3d6a52' } },
+      y: { grid: { color: 'rgba(255,255,255,0.04)', drawBorder: false }, border: { display: false }, ticks: { font: { size: 11 }, color: '#3d6a52', maxTicksLimit: 5, callback: v => '$'+v.toLocaleString() } }
+    }
+  }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (new URLSearchParams(window.location.search).get('new') === '1') {
+    openInvoiceModal();
+    history.replaceState({}, '', window.location.pathname);
+  }
+});
+
+function syncInvoiceClient() {
+  const sel = document.getElementById('invoice-client-select');
+  const opt = sel.options[sel.selectedIndex];
+  if (opt && opt.dataset.name) document.getElementById('invoice-client-name').value = opt.dataset.name;
+}
+
+function openInvoiceModal(inv = null) {
+  const isEdit = inv !== null;
+  document.getElementById('invoice-modal-title').textContent = isEdit ? 'Edit Invoice' : 'New Invoice';
+  document.getElementById('invoice-id').value = isEdit ? inv.id : '';
+  document.getElementById('invoice-client-select').value = isEdit ? (inv.client_id || '') : '';
+  document.getElementById('invoice-client-name').value = isEdit ? inv.client_name : '';
+  document.getElementById('invoice-project').value = isEdit ? inv.project_name : '';
+  document.getElementById('invoice-amount').value = isEdit ? inv.amount : '';
+  document.getElementById('invoice-date-sent').value = isEdit ? inv.date_sent : new Date().toISOString().split('T')[0];
+  document.getElementById('invoice-due-date').value = isEdit ? inv.due_date : '';
+  document.getElementById('invoice-status').value = isEdit ? inv.status : 'unpaid';
+  clearErrors(['err-invoice-client','err-invoice-project','err-invoice-amount','err-invoice-date','err-invoice-due']);
+  openModal('invoice-modal');
+}
+
+async function saveInvoice() {
+  const id = document.getElementById('invoice-id').value;
+  const clientName = document.getElementById('invoice-client-name').value.trim();
+  const project = document.getElementById('invoice-project').value.trim();
+  const amount = document.getElementById('invoice-amount').value;
+  const dateSent = document.getElementById('invoice-date-sent').value;
+  const dueDate = document.getElementById('invoice-due-date').value;
+
+  let valid = true;
+  if (!clientName) { showError('err-invoice-client');  valid = false; }
+  if (!project)    { showError('err-invoice-project'); valid = false; }
+  if (!amount || +amount <= 0) { showError('err-invoice-amount'); valid = false; }
+  if (!dateSent)   { showError('err-invoice-date');    valid = false; }
+  if (!dueDate)    { showError('err-invoice-due');     valid = false; }
+  if (!valid) return;
+
+  const data = {
+    client_id: document.getElementById('invoice-client-select').value || null,
+    client_name: clientName,
+    project_name: project,
+    amount: parseFloat(amount),
+    date_sent: dateSent,
+    due_date: dueDate,
+    status: document.getElementById('invoice-status').value,
+  };
+
+  const btn = document.getElementById('save-invoice-btn');
+  btn.disabled = true;
+  const url = id ? `/api/invoices/${id}` : '/api/invoices';
+  const res = await apiCall(url, id ? 'PUT' : 'POST', data);
+  btn.disabled = false;
+
+  if (res.success) {
+    closeModal('invoice-modal');
+    showToast(id ? 'Invoice updated' : 'Invoice created', 'success');
+    setTimeout(() => location.reload(), 600);
+  } else {
+    showToast(res.error || 'Something went wrong', 'error');
+  }
+}
+
+async function deleteInvoice(id, btn) {
+  if (!confirm('Delete this invoice?')) return;
+  const res = await apiCall(`/api/invoices/${id}`, 'DELETE');
+  if (res.success) {
+    btn.closest('tr').remove();
+    showToast('Invoice deleted', 'success');
+  } else {
+    showToast(res.error || 'Delete failed', 'error');
+  }
+}
+
+async function updateInvoiceStatus(id, status, sel) {
+  const res = await apiCall(`/api/invoices/${id}/status`, 'POST', { status });
+  if (res.success) {
+    sel.closest('tr').dataset.status = status;
+    showToast('Status updated', 'success');
+  } else {
+    showToast(res.error || 'Update failed', 'error');
+  }
+}
+
+function filterInvoices(filter, tabEl) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  tabEl.classList.add('active');
+  document.querySelectorAll('#invoices-tbody tr[data-status]').forEach(row => {
+    row.style.display = (filter === 'all' || row.dataset.status === filter) ? '' : 'none';
+  });
+}
+</script>
+{% endblock %}
