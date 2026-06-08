@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Invoices{% endblock %}
 {% block page_title %}Invoices & Revenue{% endblock %}
-{% block page_subtitle %}Track income, invoices, and monthly profit/loss{% endblock %}
+{% block page_subtitle %}Track income, invoices, retainers, and monthly profit/loss{% endblock %}
 
 {% block topbar_actions %}
 <button class="btn btn-primary" onclick="openInvoiceModal()">
@@ -11,7 +11,7 @@
 
 {% block content %}
 <!-- Summary cards -->
-<div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:24px">
   <div class="stat-card">
     <div class="stat-card-top">
       <div>
@@ -20,6 +20,16 @@
       </div>
       <div class="stat-icon green"><i class="fa-solid fa-circle-dollar-to-slot"></i></div>
     </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-card-top">
+      <div>
+        <div class="stat-value">${{ "%.0f"|format(mrr) }}</div>
+        <div class="stat-label">Monthly Recurring Revenue</div>
+      </div>
+      <div class="stat-icon blue"><i class="fa-solid fa-rotate"></i></div>
+    </div>
+    <div class="text-sm text-muted">Active retainers</div>
   </div>
   <div class="stat-card">
     <div class="stat-card-top">
@@ -40,6 +50,51 @@
     </div>
   </div>
 </div>
+
+<!-- Active Retainers Panel -->
+{% if active_retainers %}
+<div class="card" style="margin-bottom:24px">
+  <div class="card-header">
+    <div class="card-title"><i class="fa-solid fa-rotate" style="color:var(--info);margin-right:8px"></i>Active Retainers</div>
+    <span class="badge" style="background:rgba(99,179,237,0.12);color:var(--info)">{{ active_retainers|length }} active</span>
+  </div>
+  <div class="card-body pt-0">
+    <div class="sub-list">
+      {% for r in active_retainers %}
+      <div class="sub-row">
+        <div class="sub-icon" style="background:rgba(99,179,237,0.12);color:var(--info)">
+          <i class="fa-solid fa-handshake"></i>
+        </div>
+        <div class="sub-info">
+          <div class="sub-name">{{ r.client_name }}{% if r.company %} <span class="text-muted" style="font-weight:400">· {{ r.company }}</span>{% endif %}</div>
+          <div class="sub-meta">{{ r.project_name }}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span class="badge" style="background:rgba(99,179,237,0.12);color:var(--info);text-transform:capitalize">
+            {{ r.retainer_interval or 'monthly' }}
+          </span>
+          <div class="sub-amount">${{ "%.2f"|format(r.amount) }}<span class="sub-per">/{{ (r.retainer_interval or 'mo')[0:2] }}</span></div>
+          <button class="btn btn-ghost btn-sm" onclick='openInvoiceModal({{ {
+            "id": r.id,
+            "client_id": r.client_id,
+            "client_name": r.client_name,
+            "project_name": r.project_name,
+            "amount": r.amount,
+            "date_sent": r.date_sent,
+            "due_date": r.due_date,
+            "status": r.status,
+            "invoice_type": "retainer",
+            "retainer_interval": r.retainer_interval or "monthly"
+          } | tojson }})'>
+            <i class="fa-solid fa-pen"></i>
+          </button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <div class="dashboard-grid" style="margin-bottom:24px">
   <!-- P&L Chart -->
@@ -92,6 +147,7 @@
     <div class="flex gap-2">
       <div class="tabs">
         <button class="tab-btn active" onclick="filterInvoices('all', this)">All</button>
+        <button class="tab-btn" onclick="filterInvoices('retainer', this)">Retainers</button>
         <button class="tab-btn" onclick="filterInvoices('paid', this)">Paid</button>
         <button class="tab-btn" onclick="filterInvoices('unpaid', this)">Unpaid</button>
         <button class="tab-btn" onclick="filterInvoices('overdue', this)">Overdue</button>
@@ -104,10 +160,10 @@
         <thead>
           <tr>
             <th>Client</th>
-            <th>Project</th>
+            <th>Project / Type</th>
             <th>Amount</th>
             <th>Date Sent</th>
-            <th>Due Date</th>
+            <th>Due / Next</th>
             <th>Status</th>
             <th style="text-align:right">Actions</th>
           </tr>
@@ -115,7 +171,8 @@
         <tbody id="invoices-tbody">
           {% if invoices %}
             {% for inv in invoices %}
-            <tr data-status="{{ inv.status }}">
+            {% set itype = inv.invoice_type or 'one-time' %}
+            <tr data-status="{{ inv.status }}" data-type="{{ itype }}">
               <td>
                 <div class="client-info">
                   <div class="client-avatar">{{ inv.client_name[0]|upper }}</div>
@@ -125,17 +182,33 @@
                   </div>
                 </div>
               </td>
-              <td>{{ inv.project_name }}</td>
+              <td>
+                <div>{{ inv.project_name }}</div>
+                {% if itype == 'retainer' %}
+                  <span class="badge" style="background:rgba(99,179,237,0.12);color:var(--info);margin-top:3px;display:inline-flex;gap:4px;align-items:center">
+                    <i class="fa-solid fa-rotate" style="font-size:9px"></i>
+                    Retainer · {{ inv.retainer_interval or 'monthly' }}
+                  </span>
+                {% endif %}
+              </td>
               <td class="td-primary">${{ "%.2f"|format(inv.amount) }}</td>
               <td>{{ inv.date_sent }}</td>
               <td>{{ inv.due_date }}</td>
               <td>
-                <select class="form-control" style="width:auto;padding:4px 8px;font-size:12px"
-                  onchange="updateInvoiceStatus({{ inv.id }}, this.value, this)">
-                  <option value="unpaid" {% if inv.status=='unpaid' %}selected{% endif %}>Unpaid</option>
-                  <option value="paid"   {% if inv.status=='paid'   %}selected{% endif %}>Paid</option>
-                  <option value="overdue"{% if inv.status=='overdue'%}selected{% endif %}>Overdue</option>
-                </select>
+                {% if itype == 'retainer' %}
+                  <select class="form-control" style="width:auto;padding:4px 8px;font-size:12px"
+                    onchange="updateInvoiceStatus({{ inv.id }}, this.value, this)">
+                    <option value="active"    {% if inv.status=='active'    %}selected{% endif %}>Active</option>
+                    <option value="cancelled" {% if inv.status=='cancelled' %}selected{% endif %}>Cancelled</option>
+                  </select>
+                {% else %}
+                  <select class="form-control" style="width:auto;padding:4px 8px;font-size:12px"
+                    onchange="updateInvoiceStatus({{ inv.id }}, this.value, this)">
+                    <option value="unpaid" {% if inv.status=='unpaid' %}selected{% endif %}>Unpaid</option>
+                    <option value="paid"   {% if inv.status=='paid'   %}selected{% endif %}>Paid</option>
+                    <option value="overdue"{% if inv.status=='overdue'%}selected{% endif %}>Overdue</option>
+                  </select>
+                {% endif %}
               </td>
               <td>
                 <div class="flex gap-2" style="justify-content:flex-end">
@@ -148,7 +221,9 @@
                       "amount": inv.amount,
                       "date_sent": inv.date_sent,
                       "due_date": inv.due_date,
-                      "status": inv.status
+                      "status": inv.status,
+                      "invoice_type": itype,
+                      "retainer_interval": inv.retainer_interval or "monthly"
                     } | tojson }})'>
                     <i class="fa-solid fa-pen"></i>
                   </button>
@@ -185,6 +260,30 @@
     </div>
     <div class="modal-body">
       <input type="hidden" id="invoice-id">
+
+      <!-- Invoice Type Toggle -->
+      <div class="form-group" style="margin-bottom:20px">
+        <label class="form-label">Invoice Type</label>
+        <div class="interval-options" id="invoice-type-picker" style="width:fit-content">
+          <div class="interval-option active" data-val="one-time" onclick="setInvoiceType('one-time', this)">
+            <i class="fa-solid fa-file-invoice" style="margin-right:6px;font-size:11px"></i>One-Time
+          </div>
+          <div class="interval-option" data-val="retainer" onclick="setInvoiceType('retainer', this)">
+            <i class="fa-solid fa-rotate" style="margin-right:6px;font-size:11px"></i>Monthly Retainer
+          </div>
+        </div>
+      </div>
+
+      <!-- Retainer billing cycle (only shown for retainer type) -->
+      <div class="form-group" id="retainer-interval-group" style="display:none;margin-bottom:20px">
+        <label class="form-label">Billing Cycle</label>
+        <div class="interval-options" id="retainer-interval-picker" style="width:fit-content">
+          <div class="interval-option active" data-val="monthly"   onclick="setRetainerInterval('monthly', this)">Monthly</div>
+          <div class="interval-option"         data-val="quarterly" onclick="setRetainerInterval('quarterly', this)">Quarterly</div>
+          <div class="interval-option"         data-val="yearly"    onclick="setRetainerInterval('yearly', this)">Yearly</div>
+        </div>
+      </div>
+
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Client <span class="req">*</span></label>
@@ -202,8 +301,8 @@
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">Project Name <span class="req">*</span></label>
-        <input type="text" id="invoice-project" class="form-control" placeholder="e.g. Website Redesign, SEO Campaign">
+        <label class="form-label">Project / Service Name <span class="req">*</span></label>
+        <input type="text" id="invoice-project" class="form-control" placeholder="e.g. Website Redesign, Monthly SEO Retainer">
         <div class="form-error" id="err-invoice-project">Project name is required</div>
       </div>
       <div class="form-row cols-3">
@@ -213,17 +312,18 @@
           <div class="form-error" id="err-invoice-amount">Enter a valid amount</div>
         </div>
         <div class="form-group">
-          <label class="form-label">Date Sent <span class="req">*</span></label>
+          <label class="form-label" id="label-date-sent">Date Sent <span class="req">*</span></label>
           <input type="date" id="invoice-date-sent" class="form-control">
           <div class="form-error" id="err-invoice-date">Date is required</div>
         </div>
         <div class="form-group">
-          <label class="form-label">Due Date <span class="req">*</span></label>
+          <label class="form-label" id="label-due-date">Due Date <span class="req">*</span></label>
           <input type="date" id="invoice-due-date" class="form-control">
           <div class="form-error" id="err-invoice-due">Due date is required</div>
         </div>
       </div>
-      <div class="form-group">
+      <!-- Status field — hidden for retainers (auto-set to 'active') -->
+      <div class="form-group" id="invoice-status-group">
         <label class="form-label">Status</label>
         <select id="invoice-status" class="form-control">
           <option value="unpaid">Unpaid</option>
@@ -298,12 +398,47 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+// ── Invoice type toggle ──────────────────────────────────────────────────────
+let currentInvoiceType = 'one-time';
+let currentRetainerInterval = 'monthly';
+
+function setInvoiceType(val, el) {
+  currentInvoiceType = val;
+  document.querySelectorAll('#invoice-type-picker .interval-option').forEach(o => o.classList.remove('active'));
+  el.classList.add('active');
+
+  const retainerGroup = document.getElementById('retainer-interval-group');
+  const statusGroup   = document.getElementById('invoice-status-group');
+  const labelSent     = document.getElementById('label-date-sent');
+  const labelDue      = document.getElementById('label-due-date');
+
+  if (val === 'retainer') {
+    retainerGroup.style.display = '';
+    statusGroup.style.display   = 'none';
+    labelSent.innerHTML = 'Contract Start <span class="req">*</span>';
+    labelDue.innerHTML  = 'Next Billing Date <span class="req">*</span>';
+  } else {
+    retainerGroup.style.display = 'none';
+    statusGroup.style.display   = '';
+    labelSent.innerHTML = 'Date Sent <span class="req">*</span>';
+    labelDue.innerHTML  = 'Due Date <span class="req">*</span>';
+  }
+}
+
+function setRetainerInterval(val, el) {
+  currentRetainerInterval = val;
+  document.querySelectorAll('#retainer-interval-picker .interval-option').forEach(o => o.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// ── Client sync ──────────────────────────────────────────────────────────────
 function syncInvoiceClient() {
   const sel = document.getElementById('invoice-client-select');
   const opt = sel.options[sel.selectedIndex];
   if (opt && opt.dataset.name) document.getElementById('invoice-client-name').value = opt.dataset.name;
 }
 
+// ── Open modal ───────────────────────────────────────────────────────────────
 function openInvoiceModal(inv = null) {
   const isEdit = inv !== null;
   document.getElementById('invoice-modal-title').textContent = isEdit ? 'Edit Invoice' : 'New Invoice';
@@ -316,16 +451,34 @@ function openInvoiceModal(inv = null) {
   document.getElementById('invoice-due-date').value = isEdit ? inv.due_date : '';
   document.getElementById('invoice-status').value = isEdit ? inv.status : 'unpaid';
   clearErrors(['err-invoice-client','err-invoice-project','err-invoice-amount','err-invoice-date','err-invoice-due']);
+
+  // Restore type
+  const itype = isEdit ? (inv.invoice_type || 'one-time') : 'one-time';
+  currentInvoiceType = itype;
+  document.querySelectorAll('#invoice-type-picker .interval-option').forEach(o => {
+    o.classList.toggle('active', o.dataset.val === itype);
+  });
+  // Trigger UI update
+  setInvoiceType(itype, document.querySelector(`#invoice-type-picker [data-val="${itype}"]`));
+
+  // Restore retainer interval
+  const interval = isEdit ? (inv.retainer_interval || 'monthly') : 'monthly';
+  currentRetainerInterval = interval;
+  document.querySelectorAll('#retainer-interval-picker .interval-option').forEach(o => {
+    o.classList.toggle('active', o.dataset.val === interval);
+  });
+
   openModal('invoice-modal');
 }
 
+// ── Save invoice ─────────────────────────────────────────────────────────────
 async function saveInvoice() {
-  const id = document.getElementById('invoice-id').value;
+  const id         = document.getElementById('invoice-id').value;
   const clientName = document.getElementById('invoice-client-name').value.trim();
-  const project = document.getElementById('invoice-project').value.trim();
-  const amount = document.getElementById('invoice-amount').value;
-  const dateSent = document.getElementById('invoice-date-sent').value;
-  const dueDate = document.getElementById('invoice-due-date').value;
+  const project    = document.getElementById('invoice-project').value.trim();
+  const amount     = document.getElementById('invoice-amount').value;
+  const dateSent   = document.getElementById('invoice-date-sent').value;
+  const dueDate    = document.getElementById('invoice-due-date').value;
 
   let valid = true;
   if (!clientName) { showError('err-invoice-client');  valid = false; }
@@ -335,14 +488,17 @@ async function saveInvoice() {
   if (!dueDate)    { showError('err-invoice-due');     valid = false; }
   if (!valid) return;
 
+  const isRetainer = currentInvoiceType === 'retainer';
   const data = {
-    client_id: document.getElementById('invoice-client-select').value || null,
-    client_name: clientName,
-    project_name: project,
-    amount: parseFloat(amount),
-    date_sent: dateSent,
-    due_date: dueDate,
-    status: document.getElementById('invoice-status').value,
+    client_id:         document.getElementById('invoice-client-select').value || null,
+    client_name:       clientName,
+    project_name:      project,
+    amount:            parseFloat(amount),
+    date_sent:         dateSent,
+    due_date:          dueDate,
+    status:            isRetainer ? 'active' : document.getElementById('invoice-status').value,
+    invoice_type:      currentInvoiceType,
+    retainer_interval: isRetainer ? currentRetainerInterval : 'monthly',
   };
 
   const btn = document.getElementById('save-invoice-btn');
@@ -353,13 +509,14 @@ async function saveInvoice() {
 
   if (res.success) {
     closeModal('invoice-modal');
-    showToast(id ? 'Invoice updated' : 'Invoice created', 'success');
+    showToast(id ? 'Invoice updated' : (isRetainer ? 'Retainer added' : 'Invoice created'), 'success');
     setTimeout(() => location.reload(), 600);
   } else {
     showToast(res.error || 'Something went wrong', 'error');
   }
 }
 
+// ── Delete / status ──────────────────────────────────────────────────────────
 async function deleteInvoice(id, btn) {
   if (!confirm('Delete this invoice?')) return;
   const res = await apiCall(`/api/invoices/${id}`, 'DELETE');
@@ -381,11 +538,18 @@ async function updateInvoiceStatus(id, status, sel) {
   }
 }
 
+// ── Filter tabs ──────────────────────────────────────────────────────────────
 function filterInvoices(filter, tabEl) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   tabEl.classList.add('active');
   document.querySelectorAll('#invoices-tbody tr[data-status]').forEach(row => {
-    row.style.display = (filter === 'all' || row.dataset.status === filter) ? '' : 'none';
+    if (filter === 'all') {
+      row.style.display = '';
+    } else if (filter === 'retainer') {
+      row.style.display = (row.dataset.type === 'retainer') ? '' : 'none';
+    } else {
+      row.style.display = (row.dataset.status === filter && row.dataset.type !== 'retainer') ? '' : 'none';
+    }
   });
 }
 </script>

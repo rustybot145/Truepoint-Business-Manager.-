@@ -73,6 +73,8 @@ def migrate_db():
     for sql in [
         "ALTER TABLE expenses ADD COLUMN is_recurring INTEGER DEFAULT 0",
         "ALTER TABLE expenses ADD COLUMN recurring_interval TEXT DEFAULT 'monthly'",
+        "ALTER TABLE invoices ADD COLUMN invoice_type TEXT DEFAULT 'one-time'",
+        "ALTER TABLE invoices ADD COLUMN retainer_interval TEXT DEFAULT 'monthly'",
     ]:
         try:
             conn.execute(sql)
@@ -82,10 +84,27 @@ def migrate_db():
     conn.close()
 
 
+def calc_mrr(conn):
+    """Return monthly recurring revenue from all active retainer invoices."""
+    rows = conn.execute(
+        "SELECT amount, retainer_interval FROM invoices WHERE invoice_type='retainer' AND status='active'"
+    ).fetchall()
+    mrr = 0.0
+    for r in rows:
+        interval = r['retainer_interval'] or 'monthly'
+        if interval == 'monthly':
+            mrr += r['amount']
+        elif interval == 'quarterly':
+            mrr += r['amount'] / 3.0
+        elif interval == 'yearly':
+            mrr += r['amount'] / 12.0
+    return round(mrr, 2)
+
+
 def auto_update_overdue(conn):
     today = date.today().isoformat()
     conn.execute(
-        "UPDATE invoices SET status = 'overdue' WHERE status = 'unpaid' AND due_date < ?",
+        "UPDATE invoices SET status = 'overdue' WHERE status = 'unpaid' AND due_date < ? AND (invoice_type IS NULL OR invoice_type = 'one-time')",
         (today,)
     )
     conn.commit()
@@ -136,6 +155,7 @@ def dashboard():
     ).fetchone()['t']
 
     monthly_profit = round(monthly_income - monthly_expenses, 2)
+    mrr = calc_mrr(conn)
 
     # 6-month chart data
     chart_labels, chart_income, chart_expenses = [], [], []
@@ -165,6 +185,7 @@ def dashboard():
         monthly_income=monthly_income,
         monthly_expenses=monthly_expenses,
         monthly_profit=monthly_profit,
+        mrr=mrr,
         outstanding=outstanding,
         total_clients=total_clients,
         active_projects=active_projects,
@@ -413,6 +434,15 @@ def finances():
         "SELECT COALESCE(SUM(amount),0) AS t FROM invoices WHERE status='overdue'"
     ).fetchone()['t']
 
+    mrr = calc_mrr(conn)
+
+    active_retainers = conn.execute(
+        '''SELECT i.*, c.company FROM invoices i
+           LEFT JOIN clients c ON i.client_id = c.id
+           WHERE i.invoice_type = 'retainer' AND i.status = 'active'
+           ORDER BY i.client_name'''
+    ).fetchall()
+
     # 6-month P&L data
     monthly_data = []
     for i in range(5, -1, -1):
@@ -445,6 +475,8 @@ def finances():
         total_revenue=total_revenue,
         outstanding_balance=outstanding_balance,
         overdue_total=overdue_total,
+        mrr=mrr,
+        active_retainers=active_retainers,
         monthly_data=monthly_data
     )
 
@@ -461,11 +493,15 @@ def api_create_invoice():
             raise ValueError
     except (ValueError, TypeError):
         return jsonify({'error': 'Amount must be a positive number'}), 400
+    invoice_type = d.get('invoice_type', 'one-time')
+    retainer_interval = d.get('retainer_interval', 'monthly')
+    default_status = 'active' if invoice_type == 'retainer' else 'unpaid'
+    status = d.get('status', default_status)
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO invoices (client_id,client_name,project_name,amount,date_sent,due_date,status) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO invoices (client_id,client_name,project_name,amount,date_sent,due_date,status,invoice_type,retainer_interval) VALUES (?,?,?,?,?,?,?,?,?)",
         (d.get('client_id') or None, d['client_name'], d['project_name'],
-         amount, d['date_sent'], d['due_date'], d.get('status', 'unpaid'))
+         amount, d['date_sent'], d['due_date'], status, invoice_type, retainer_interval)
     )
     conn.commit()
     new_id = cur.lastrowid
@@ -482,11 +518,13 @@ def api_update_invoice(iid):
             raise ValueError
     except (ValueError, TypeError):
         return jsonify({'error': 'Amount must be a positive number'}), 400
+    invoice_type = d.get('invoice_type', 'one-time')
+    retainer_interval = d.get('retainer_interval', 'monthly')
     conn = get_db()
     conn.execute(
-        "UPDATE invoices SET client_id=?,client_name=?,project_name=?,amount=?,date_sent=?,due_date=?,status=? WHERE id=?",
+        "UPDATE invoices SET client_id=?,client_name=?,project_name=?,amount=?,date_sent=?,due_date=?,status=?,invoice_type=?,retainer_interval=? WHERE id=?",
         (d.get('client_id') or None, d['client_name'], d['project_name'],
-         amount, d['date_sent'], d['due_date'], d['status'], iid)
+         amount, d['date_sent'], d['due_date'], d['status'], invoice_type, retainer_interval, iid)
     )
     conn.commit()
     conn.close()
@@ -506,7 +544,7 @@ def api_delete_invoice(iid):
 def api_update_invoice_status(iid):
     d = request.json or {}
     status = d.get('status')
-    if status not in ('paid', 'unpaid', 'overdue'):
+    if status not in ('paid', 'unpaid', 'overdue', 'active', 'cancelled'):
         return jsonify({'error': 'Invalid status'}), 400
     conn = get_db()
     conn.execute("UPDATE invoices SET status=? WHERE id=?", (status, iid))
