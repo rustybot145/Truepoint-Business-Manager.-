@@ -1,12 +1,56 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
+from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file, session
+from functools import wraps
+from werkzeug.security import check_password_hash
 import sqlite3
 import csv
 import io
 import os
 from datetime import datetime, date, timedelta
 
+# Load .env file when running locally (ignored on Railway which sets env vars natively)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'change-me-in-production')
 DATABASE = 'agency.db'
+
+# Credentials must be set via environment variables — never hardcoded
+USERNAME      = os.environ.get('APP_USERNAME')
+PASSWORD_HASH = os.environ.get('APP_PASSWORD_HASH')
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if not USERNAME or not PASSWORD_HASH:
+        return 'Server error: APP_USERNAME and APP_PASSWORD_HASH environment variables are not set.', 500
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        if username == USERNAME and check_password_hash(PASSWORD_HASH, password):
+            session['logged_in'] = True
+            return redirect(url_for('dashboard'))
+        error = 'Invalid username or password.'
+    return render_template('login.html', error=error)
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
 
 def get_db():
@@ -62,6 +106,43 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
         );
+        CREATE TABLE IF NOT EXISTS social_platforms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform TEXT UNIQUE NOT NULL,
+            followers INTEGER DEFAULT 0,
+            followers_prev_week INTEGER DEFAULT 0,
+            posts_this_week INTEGER DEFAULT 0,
+            engagement_rate REAL DEFAULT 0.0,
+            top_post_title TEXT DEFAULT '',
+            top_post_reach INTEGER DEFAULT 0,
+            follower_goal INTEGER DEFAULT 10000,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS social_follower_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform TEXT NOT NULL,
+            date TEXT NOT NULL,
+            followers INTEGER DEFAULT 0,
+            UNIQUE(platform, date)
+        );
+        CREATE TABLE IF NOT EXISTS social_content (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT DEFAULT 'scheduled',
+            notes TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS social_leads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            name_or_handle TEXT NOT NULL,
+            source TEXT DEFAULT '',
+            status TEXT DEFAULT 'new',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     ''')
     conn.commit()
     conn.close()
@@ -113,6 +194,7 @@ def auto_update_overdue(conn):
 # ─── DASHBOARD ───────────────────────────────────────────────────────────────
 
 @app.route('/')
+@login_required
 def dashboard():
     conn = get_db()
     auto_update_overdue(conn)
@@ -201,6 +283,7 @@ def dashboard():
 # ─── MEETINGS ────────────────────────────────────────────────────────────────
 
 @app.route('/meetings')
+@login_required
 def meetings():
     conn = get_db()
     clients = conn.execute("SELECT * FROM clients ORDER BY name").fetchall()
@@ -269,6 +352,7 @@ def api_complete_meeting(mid):
 # ─── EXPENSES ────────────────────────────────────────────────────────────────
 
 @app.route('/expenses')
+@login_required
 def expenses():
     conn = get_db()
     filter_month = request.args.get('month', date.today().strftime('%Y-%m'))
@@ -409,6 +493,7 @@ def api_export_expenses():
 # ─── FINANCES / INVOICES ─────────────────────────────────────────────────────
 
 @app.route('/finances')
+@login_required
 def finances():
     conn = get_db()
     auto_update_overdue(conn)
@@ -556,6 +641,7 @@ def api_update_invoice_status(iid):
 # ─── CLIENTS ─────────────────────────────────────────────────────────────────
 
 @app.route('/clients')
+@login_required
 def clients():
     conn = get_db()
     rows = conn.execute(
@@ -573,6 +659,7 @@ def clients():
 
 
 @app.route('/clients/<int:cid>')
+@login_required
 def client_detail(cid):
     conn = get_db()
     client = conn.execute("SELECT * FROM clients WHERE id=?", (cid,)).fetchone()
@@ -631,6 +718,204 @@ def api_update_client(cid):
 def api_delete_client(cid):
     conn = get_db()
     conn.execute("DELETE FROM clients WHERE id=?", (cid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+
+# ─── SOCIAL MEDIA ────────────────────────────────────────────────────────────
+
+PLATFORM_META = {
+    'instagram': {'label': 'Instagram', 'badge': 'IG', 'icon': 'fa-brands fa-instagram',
+                  'color': '#E1306C', 'lt': 'rgba(225,48,108,0.12)'},
+    'tiktok':    {'label': 'TikTok',    'badge': 'TT', 'icon': 'fa-brands fa-tiktok',
+                  'color': '#00f2ea', 'lt': 'rgba(0,242,234,0.10)'},
+    'linkedin':  {'label': 'LinkedIn',  'badge': 'LI', 'icon': 'fa-brands fa-linkedin',
+                  'color': '#0A66C2', 'lt': 'rgba(10,102,194,0.15)'},
+}
+PLATFORM_ORDER = ['instagram', 'tiktok', 'linkedin']
+
+
+@app.route('/social')
+def social():
+    conn = get_db()
+    today = date.today()
+
+    for platform in PLATFORM_ORDER:
+        conn.execute("INSERT OR IGNORE INTO social_platforms (platform) VALUES (?)", (platform,))
+    conn.commit()
+
+    rows = conn.execute(
+        "SELECT * FROM social_platforms ORDER BY CASE platform "
+        "WHEN 'instagram' THEN 1 WHEN 'tiktok' THEN 2 WHEN 'linkedin' THEN 3 ELSE 4 END"
+    ).fetchall()
+
+    platforms = []
+    for r in rows:
+        p = dict(r)
+        goal = p['follower_goal'] or 10000
+        raw_pct = (p['followers'] / goal * 100) if goal > 0 else 0
+        p['pct'] = round(min(raw_pct, 100.0), 1)
+        platforms.append(p)
+
+    total_followers = sum(p['followers'] for p in platforms)
+    total_posts_week = sum(p['posts_this_week'] for p in platforms)
+    active = [p for p in platforms if p['engagement_rate'] > 0]
+    avg_engagement = round(sum(p['engagement_rate'] for p in active) / len(active), 2) if active else 0.0
+    total_leads = conn.execute("SELECT COUNT(*) AS c FROM social_leads").fetchone()['c']
+
+    week_offset = int(request.args.get('week', 0))
+    weekday = today.weekday()
+    week_start = today - timedelta(days=weekday) + timedelta(weeks=week_offset)
+    week_days = [week_start + timedelta(days=i) for i in range(7)]
+    week_end = week_start + timedelta(days=6)
+
+    week_content = conn.execute(
+        "SELECT * FROM social_content WHERE date >= ? AND date <= ? ORDER BY date, platform",
+        (week_start.isoformat(), week_end.isoformat())
+    ).fetchall()
+
+    content_by_date = {}
+    content_items = {}
+    for c in week_content:
+        cd = dict(c)
+        content_by_date.setdefault(cd['date'], []).append(cd)
+        content_items[str(cd['id'])] = cd
+
+    leads = [dict(l) for l in conn.execute(
+        "SELECT * FROM social_leads ORDER BY date DESC, id DESC LIMIT 100"
+    ).fetchall()]
+    leads_by_id = {str(l['id']): l for l in leads}
+
+    history_rows = conn.execute(
+        "SELECT platform, date, followers FROM social_follower_history ORDER BY date ASC"
+    ).fetchall()
+    history = {p: [] for p in PLATFORM_ORDER}
+    for row in history_rows:
+        p = row['platform']
+        if p in history:
+            history[p].append({'date': row['date'], 'followers': row['followers']})
+
+    total_goal = sum(p['follower_goal'] for p in platforms)
+    total_pct = round(min((total_followers / total_goal * 100) if total_goal > 0 else 0, 100.0), 1)
+
+    conn.close()
+    return render_template('social.html',
+        platforms=platforms,
+        platform_meta=PLATFORM_META,
+        total_followers=total_followers,
+        total_posts_week=total_posts_week,
+        avg_engagement=avg_engagement,
+        total_leads=total_leads,
+        week_days=week_days,
+        week_offset=week_offset,
+        content_by_date=content_by_date,
+        content_items=content_items,
+        leads=leads,
+        leads_by_id=leads_by_id,
+        history=history,
+        total_goal=total_goal,
+        total_pct=total_pct,
+        today=today,
+    )
+
+
+@app.route('/api/social/platforms/<platform>/stats', methods=['POST'])
+def api_social_update_stats(platform):
+    if platform not in PLATFORM_META:
+        return jsonify({'error': 'Unknown platform'}), 400
+    d = request.json or {}
+    conn = get_db()
+    conn.execute(
+        '''UPDATE social_platforms SET followers=?,followers_prev_week=?,posts_this_week=?,
+           engagement_rate=?,top_post_title=?,top_post_reach=?,follower_goal=?,
+           updated_at=CURRENT_TIMESTAMP WHERE platform=?''',
+        (int(d.get('followers', 0)), int(d.get('followers_prev_week', 0)),
+         int(d.get('posts_this_week', 0)), float(d.get('engagement_rate', 0)),
+         d.get('top_post_title', ''), int(d.get('top_post_reach', 0)),
+         int(d.get('follower_goal', 10000)), platform)
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO social_follower_history (platform, date, followers) VALUES (?,?,?)",
+        (platform, date.today().isoformat(), int(d.get('followers', 0)))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+
+@app.route('/api/social/content', methods=['POST'])
+def api_social_create_content():
+    d = request.json or {}
+    if not d.get('date') or not d.get('platform') or not d.get('title'):
+        return jsonify({'error': 'Date, platform, and title are required'}), 400
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO social_content (date,platform,title,status,notes) VALUES (?,?,?,?,?)",
+        (d['date'], d['platform'], d['title'], d.get('status', 'scheduled'), d.get('notes', ''))
+    )
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return jsonify({'success': True, 'id': new_id})
+
+
+@app.route('/api/social/content/<int:cid>', methods=['PUT'])
+def api_social_update_content(cid):
+    d = request.json or {}
+    conn = get_db()
+    conn.execute(
+        "UPDATE social_content SET date=?,platform=?,title=?,status=?,notes=? WHERE id=?",
+        (d['date'], d['platform'], d['title'], d.get('status', 'scheduled'), d.get('notes', ''), cid)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+
+@app.route('/api/social/content/<int:cid>', methods=['DELETE'])
+def api_social_delete_content(cid):
+    conn = get_db()
+    conn.execute("DELETE FROM social_content WHERE id=?", (cid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+
+@app.route('/api/social/leads', methods=['POST'])
+def api_social_create_lead():
+    d = request.json or {}
+    if not d.get('platform') or not d.get('name_or_handle'):
+        return jsonify({'error': 'Platform and name/handle are required'}), 400
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO social_leads (date,platform,name_or_handle,source,status) VALUES (?,?,?,?,?)",
+        (d.get('date', date.today().isoformat()), d['platform'],
+         d['name_or_handle'], d.get('source', ''), d.get('status', 'new'))
+    )
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return jsonify({'success': True, 'id': new_id})
+
+
+@app.route('/api/social/leads/<int:lid>', methods=['PUT'])
+def api_social_update_lead(lid):
+    d = request.json or {}
+    conn = get_db()
+    conn.execute(
+        "UPDATE social_leads SET date=?,platform=?,name_or_handle=?,source=?,status=? WHERE id=?",
+        (d['date'], d['platform'], d['name_or_handle'], d.get('source', ''), d['status'], lid)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+
+@app.route('/api/social/leads/<int:lid>', methods=['DELETE'])
+def api_social_delete_lead(lid):
+    conn = get_db()
+    conn.execute("DELETE FROM social_leads WHERE id=?", (lid,))
     conn.commit()
     conn.close()
     return jsonify({'success': True})

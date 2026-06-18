@@ -66,10 +66,19 @@
          class="nav-item {% if request.endpoint in ['clients','client_detail'] %}active{% endif %}">
         <i class="fa-solid fa-users"></i><span>Clients</span>
       </a>
+
+      <div class="nav-section-label">Marketing</div>
+      <a href="{{ url_for('social') }}"
+         class="nav-item {% if request.endpoint == 'social' %}active{% endif %}">
+        <i class="fa-solid fa-signal"></i><span>Social Media</span>
+      </a>
     </nav>
 
     <div class="sidebar-footer">
       <div class="sidebar-footer-info">TruePoint v1.0</div>
+      <a href="{{ url_for('logout') }}" class="nav-item" style="margin-top:8px;color:var(--text-3)">
+        <i class="fa-solid fa-arrow-right-from-bracket"></i><span>Sign Out</span>
+      </a>
     </div>
   </aside>
 
