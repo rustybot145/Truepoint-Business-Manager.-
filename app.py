@@ -737,6 +737,7 @@ PLATFORM_ORDER = ['instagram', 'tiktok', 'linkedin']
 
 
 @app.route('/social')
+@login_required
 def social():
     conn = get_db()
     today = date.today()
